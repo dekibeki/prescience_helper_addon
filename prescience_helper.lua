@@ -103,7 +103,7 @@ function Prescience_helper:ADDON_LOADED(addon_name)
     self.unitFramesParent:SetScript("OnMouseUp", function(self, _)
       self:StopMovingOrSizing()
       local point, relativeFrame, relativeTo, ofsx, ofsy = self:GetPoint()
-            Prescience_helper.db.unit_frames_frame.point = point;
+      Prescience_helper.db.unit_frames_frame.point = point;
       Prescience_helper.db.unit_frames_frame.relativeFrame = relativeFrame;
       Prescience_helper.db.unit_frames_frame.relativePoint = relativeTo;
       Prescience_helper.db.unit_frames_frame.ofsx = ofsx;
@@ -112,19 +112,31 @@ function Prescience_helper:ADDON_LOADED(addon_name)
       Prescience_helper.db.unit_frames_frame.height = self:GetHeight();
     end);
 
-    self.unitFrames = {};
-
-    for i=0,18 do
-      local new_button = CreateFrame("Button", "ph_playerButton"..i,nil, "SecureUnitButtonTemplate");
-      new_button.texture = new_button:CreateTexture();
-      new_button.texture:SetAllPoints(new_button);
-      new_button:SetAttribute("type","target");
-      new_button:Hide();
-      self.unitFrames[i] = new_button;
-    end
+    self.ready_unit_frames = {};
 
     self.timer = C_Timer.NewTicker(0.25,function() Prescience_helper:tick(); end);
   end
+end
+
+function Prescience_helper:get_unit_frame()
+  local ready_unit_frames_count = #self.ready_unit_frames;
+  if ready_unit_frames_count == 0 then
+    local new_button = CreateFrame("Button", nil,nil, "SecureUnitButtonTemplate");
+    new_button.texture = new_button:CreateTexture();
+    new_button.texture:SetAllPoints(new_button);
+    new_button:SetAttribute("type","target");
+    new_button:Hide();
+    return new_button;
+  else
+    local popped = self.ready_unit_frames[ready_unit_frames_count];
+    self.ready_unit_frames[ready_unit_frames_count] = nil;
+    return popped;
+  end
+end
+
+function Prescience_helper:return_unit_frame(frame)
+  frame:Hide();
+  table.insert(self.ready_unit_frames, frame);
 end
 
 function Prescience_helper:start_fight()
@@ -151,8 +163,7 @@ function Prescience_helper:fake_roster()
     self.members[guid] = {
       slot = "player",
       spec = -1,
-      avg = info.average,
-      amounts = info.amounts
+      config = info
     };
   end
 
@@ -195,6 +206,10 @@ function Prescience_helper:update_roster()
 
   for guid,info in pairs(self.members) do
     if info.slot == nil then
+      if info.button ~= nil then
+        self:return_unit_frame(info.button);
+        info.button = nil;
+      end
       removed[guid] = true;
     end
   end
@@ -205,38 +220,41 @@ function Prescience_helper:update_roster()
   self:layout();
 end
 
-local function get_dmg_value(configs,guid,time)
-  if configs[guid].amounts_length <= time then
-    return configs[guid].average;
+local function get_dmg_value(config,time)
+  if config.amounts_length <= time then
+    return config.average;
   else
-    return configs[guid].amounts[time];
+    return config.amounts[time];
   end
 end
 
-function get_info_for_eb_cast(configs,time,duration)
+local function get_info_for_eb_cast(members,time,duration)
   local values = {};
 
-  for guid,info in pairs(configs) do
-    local start_floor = math.floor(time);
-    local start_ceil = math.ceil(time);
-    local start_portion = start_ceil - time;
+  for guid,info in pairs(members) do
+    if info.config ~= nil then
+      local start_floor = math.floor(time);
+      local start_ceil = math.ceil(time);
+      local start_portion = start_ceil - time;
 
-    local end_floor = math.floor(time+duration);
-    local end_portion = time+duration-end_floor;
+      local end_floor = math.floor(time+duration);
+      local end_portion = time+duration-end_floor;
 
-    local adding = {
-      guid=guid,
-      value=0
-    };
+      local adding = {
+        guid=guid,
+        info=info,
+        value=0
+      };
 
-    adding.value = get_dmg_value(configs, guid, start_floor) * start_portion;
-    adding.value = adding.value + get_dmg_value(configs, guid, end_floor) * end_portion;
+      adding.value = get_dmg_value(info.config, start_floor) * start_portion;
+      adding.value = adding.value + get_dmg_value(info.config, end_floor) * end_portion;
 
-    for i=start_ceil,end_floor do
-      adding.value = adding.value + get_dmg_value(configs,guid,i);
+      for i=start_ceil,end_floor do
+        adding.value = adding.value + get_dmg_value(info.config,i);
+      end
+
+      table.insert(values,adding);
     end
-
-    table.insert(values,adding);
   end
 
   table.sort(values,function(a,b) return a.value > b.value; end);
@@ -249,7 +267,7 @@ local DEAD_COLOUR = {r=0,g=0,b=0,a=1};
 local BEST_COLOUR = {r=0,g=1,b=0,a=1};
 local BEST_LOCAL_COLOUR = {r=1,g=1,b=0};
 
-local function do_next_cast(time, configs, state, members)
+local function do_next_cast(time, state, members)
   local haste = GetHaste() + 1;
   local gcd = 1.5 / haste;
   local eb_cast_time = 1.5 / haste;
@@ -270,41 +288,39 @@ local function do_next_cast(time, configs, state, members)
     p1 = time+current_gcd;
   end
 
-  local eb_cast = get_info_for_eb_cast(configs, next_eb_cast + eb_cast_time, DEFAULT_EBON_MIGHT_DURATION);
+  local eb_cast = get_info_for_eb_cast(members, next_eb_cast + eb_cast_time, DEFAULT_EBON_MIGHT_DURATION);
 
   local returning = {};
 
-  for guid,info in pairs(members) do
-    if returning[guid] == nil and info.button then
-      if UnitIsDead(info.slot) then
-        returning[guid] = {
-          colour=DEAD_COLOUR
-        };
+  for _,eb_info in ipairs(eb_cast) do
+    if eb_info.info.button then
+      eb_info.is_dead = UnitIsDead(eb_info.info.slot);
+      if eb_info.is_dead then
+        eb_info.colour = DEAD_COLOUR;
       else
-        returning[guid] = {
-          colour=IGNORE_COLOUR,
-        };
+        eb_info.colour = IGNORE_COLOUR;
       end
-      local inRangeRes = IsSpellInRange(PRESCIENCE_NAME, info.slot);
-      returning[guid].inRange = inRangeRes ~= nil and inRangeRes ~= 0;
+      local in_range_res = IsSpellInRange(PRESCIENCE_NAME, eb_info.info.slot);
+      eb_info.in_range = in_range_res ~= nil and in_range_res ~= 0;
+      table.insert(returning, eb_info);
     end
   end
 
 
   --eb_cast is returned from get_info_for_eb_cast sorted largest to smallest, so we go through them
   local found_best = false;
-  for _,info in ipairs(eb_cast) do
-    if members[info.guid] then
-      local isDead = UnitIsDead(members[info.guid].slot);
-      local doesnt_have_prescience_for_next_em = state.prescience.on[info.guid] == nil or state.prescience.on[info.guid].expires < next_eb_cast + eb_cast_time
-      if not isDead and doesnt_have_prescience_for_next_em  then --if we're not dead and we don't have prescience that'll last until the next ebon might
-        if not found_best then --if we haven't found the best yet, use this
-          returning[info.guid].colour = BEST_COLOUR;
-          found_best = true;
-        elseif returning[info.guid].inRange then --otherwise we're looking for the next best that's in range
-          returning[info.guid].colour = BEST_LOCAL_COLOUR;
+  for _,eb_info in ipairs(returning) do
+    local doesnt_have_prescience_for_next_em = state.prescience.on[eb_info.guid] == nil or state.prescience.on[eb_info.guid].expires < next_eb_cast + eb_cast_time
+    if not eb_info.is_dead and doesnt_have_prescience_for_next_em  then --if we're not dead and we don't have prescience that'll last until the next ebon might
+      if not found_best then --if we haven't found the best yet, use this
+        eb_info.colour = BEST_COLOUR;
+        if eb_info.in_range then --if it's also in range, we don't need to find the best in range
           return returning;
         end
+        found_best = true;
+      elseif eb_info.in_range then --otherwise we're looking for the next best that's in range
+        eb_info.colour = BEST_LOCAL_COLOUR;
+        return returning;
       end
     end
   end
@@ -317,39 +333,37 @@ function Prescience_helper:tick()
   if self.in_encounter then
     time = GetTime() - self.start_time;
   end
-  local res = do_next_cast(time, self.configs, self.state, self.members);
+  local res = do_next_cast(time, self.state, self.members);
 
-  for guid,info in pairs(res) do
+  for _,info in ipairs(res) do
     local alpha = 1;
-    if not info.inRange then
+    if not info.in_range then
       alpha = 0.5;
     end
-    self.members[guid].button.texture:SetColorTexture(info.colour.r,info.colour.g,info.colour.b, alpha);
+    info.info.button.texture:SetColorTexture(info.colour.r,info.colour.g,info.colour.b, alpha);
   end
 end
 
 function Prescience_helper:layout()
   for _,member in pairs(self.members) do
     if member.button ~= nil then
-      member.button:Hide();
+      self:return_unit_frame(member.button);
       member.button = nil;
     end
   end
 
   local sorted_for_placement = {}
-  local i = 0;
-  for guid,info in pairs(self.configs) do
-    if self.members[guid] ~= nil then
-      local button = self.unitFrames[i];
+  for guid,info in pairs(self.members) do
+    info.config = self.configs[guid]; --if self.configs[guid] doesn't exist, it'll set it to nil for free      
+    if info.config ~= nil then
+      local button = self:get_unit_frame();
       button:SetAttribute("unit",self.members[guid].slot);
       info.button = button;
-      self.members[guid].button = button;
       table.insert(sorted_for_placement, info);
-      i = i + 1;
     end
   end
 
-  table.sort(sorted_for_placement, function (a,b) return a.order < b.order; end);
+  table.sort(sorted_for_placement, function (a,b) return a.config.order < b.config.order; end);
 
   local button_count = #sorted_for_placement;
   local column_length = math.ceil(math.sqrt(button_count));
@@ -390,11 +404,7 @@ function Prescience_helper:layout()
     i = i + 1;
   end
 
-  local initial_eb = do_next_cast(0,self.configs,make_clean_state(), self.members);
-
-  for guid,info in pairs(initial_eb) do
-    self.members[guid].button.texture:SetColorTexture(info.colour.r,info.colour.g,info.colour.b,1);
-  end
+  self:tick();
 end
 
 function Prescience_helper:on_input(input)
@@ -409,6 +419,22 @@ function Prescience_helper:on_input(input)
 
   self.configs = {
   };
+
+  local version_start,version_end,version_string = string.find(input, "^(%d)+?");
+
+  if version_start == nil then
+    print("Couldn't find version of input");
+    return;
+  end
+
+  local version = tonumber(version_string);
+
+  if math.floor(version) ~= version then
+    print("Invalid version: '"..version_string.."'");
+    return;
+  end
+
+  input = string.sub(input, version_end + 2);
 
   for member in string.gmatch(input,"([^>]+)>") do
     local guid,average,amounts = string.match(member,"([^<]+)<([^<]+)<(.*)");
