@@ -1,5 +1,5 @@
 ## Interface: 100205
-## Title: Prescience Helper Dev
+## Title: Prescience Helper
 ## Author: Dekibeki
 ## Version: 0.0
 ## SavedVariables: prescience_helper_db

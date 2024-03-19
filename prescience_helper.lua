@@ -190,7 +190,7 @@ local IGNORE_COLOUR = make_colour(IGNORE_RGB,IGNORE_ALPHA);
 local BEST_LOCAL_COLOUR = make_colour(BEST_LOCAL_RGB, NORMAL_ALPHA);
 
 function Prescience_helper:ADDON_LOADED(addon_name)
-  if addon_name == "Prescience_helper_dev" then
+  if addon_name == "Prescience_helper" then
     --set up db
     prescience_helper_db = prescience_helper_db or {}
     self.db = prescience_helper_db;
