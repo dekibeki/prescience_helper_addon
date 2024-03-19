@@ -123,11 +123,11 @@ local function calc_damage(damage, with_ebon, with_prescience, with_shifting_san
   return returning - damage.base;
 end
 
-local function calc_damage_range(damages, start_time, end_time, with_ebon, with_prescience, with_shifting_sands)
+local function calc_damage_range(damages, start_time, duration, with_ebon, with_prescience, with_shifting_sands)
   local start_index = 1;
+  local end_time = start_time + duration;
 
   local damages_len = #damages;
-
   if damages_len == 0 then
     return 0;
   end
@@ -154,7 +154,8 @@ local function calc_damage_range(damages, start_time, end_time, with_ebon, with_
   if start_index == end_index then
     return calc_damage(damages[start_index],with_ebon,with_prescience,with_shifting_sands) * (end_time - start_time);
   end
-    local returning = 0;
+
+  local returning = 0;
   local prev_time = start_time;
 
   for i=start_index,end_index-1 do
@@ -211,6 +212,12 @@ function Prescience_helper:ADDON_LOADED(addon_name)
       name=player_name,
       player=true
     };
+    self.cached = {
+      next_eb_hit=-1,
+      best="",
+      best_local=""
+    };
+    self.force_recalc = true;
 
     --set up unit frames parent
     self.unitFramesParent = CreateFrame("Frame","ph_unit_frames_parent",Prescience_helper);
@@ -457,6 +464,8 @@ function Prescience_helper:tick()
     next_eb_hit = next_free_action+eb_cast_time;
     next_free_action = next_eb_hit + max(eb_cast_time,gcd);
   end
+
+  local prescience_gains = {};
   
   local eb_gains = {};
 
@@ -471,7 +480,6 @@ function Prescience_helper:tick()
         slot=config.slot
       };
       tinsert(eb_gains, eb_info);
-
       colours[guid] = IGNORE_COLOUR;
     else
       colours[guid] = DEAD_COLOUR;
@@ -612,7 +620,7 @@ function Prescience_helper:on_input(input)
   local i = 0;
   local j = 0;
 
-  self.configs = {
+  local new_configs = {
   };
 
   local version_start,version_end,version_string = string.find(input, "^(%d)+?");
@@ -646,6 +654,8 @@ function Prescience_helper:on_input(input)
     return;
   end
 
+  local debug = "";
+
   for i=1,player_count do
     if bytes_count < on + 6 then
       print("Invalid input, not long enough for player header");
@@ -653,6 +663,7 @@ function Prescience_helper:on_input(input)
     end
 
     local player_guid = to_player_guid(to_bytes, on);
+    debug = debug..player_guid..'\n';
     on = on + 6;
 
     local new_player = {
@@ -670,7 +681,7 @@ function Prescience_helper:on_input(input)
       new_player.unit_frame.name:SetText(player_guid);
     end
 
-    self.configs[player_guid] = new_player;
+    new_configs[player_guid] = new_player;
     
     local prev_window = -1;
 
@@ -689,16 +700,35 @@ function Prescience_helper:on_input(input)
         return;
       end
       prev_window = prev_window + delta_windows + 1; --set prev_window to the current window
+
+      local time_at = prev_window * window_size / 1000; -- / 1000 to take it to seconds
+      local base = to_uint(to_bytes, on, 2);
+      local ebon_mult = 1 + to_bytes[on+2] / 100;
+      local prescience_mult = 1 + to_bytes[on+3] / 100;
+      local shifting_sands_mult = 1 + to_bytes[on+4] / 100;
+
       tinsert(new_player.damages,{
-        time_at = prev_window * window_size,
-        base = to_uint(to_bytes, on,2),
-        ebon_mult = 1 + to_bytes[on+2] / 100,
-        prescience_mult = 1 + to_bytes[on+3] / 100,
-        shifting_sands_mult = 1 + to_bytes[on+4] / 100
+        time_at = time_at,
+        base = base,
+        ebon_mult = ebon_mult,
+        prescience_mult = prescience_mult,
+        shifting_sands_mult = shifting_sands_mult
       });
+
+      debug = debug..time_at.." "..base.." "..ebon_mult.." "..prescience_mult.." "..shifting_sands_mult..'\n';
       on = on + 5;
     end
   end
+
+  print("Loaded "..player_count.." players");
+
+  Prescience_helper.settings_edit_box:SetText(debug)
+  Prescience_helper.settings_edit_box:HighlightText()
+
+  Prescience_helper.settings_frame:Show();
+
+  self.configs = new_configs;
+
   self:layout();
 end
 
