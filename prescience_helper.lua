@@ -654,8 +654,6 @@ function Prescience_helper:on_input(input)
     return;
   end
 
-  local debug = "";
-
   for i=1,player_count do
     if bytes_count < on + 6 then
       print("Invalid input, not long enough for player header");
@@ -663,7 +661,6 @@ function Prescience_helper:on_input(input)
     end
 
     local player_guid = to_player_guid(to_bytes, on);
-    debug = debug..player_guid..'\n';
     on = on + 6;
 
     local new_player = {
@@ -714,18 +711,11 @@ function Prescience_helper:on_input(input)
         prescience_mult = prescience_mult,
         shifting_sands_mult = shifting_sands_mult
       });
-
-      debug = debug..time_at.." "..base.." "..ebon_mult.." "..prescience_mult.." "..shifting_sands_mult..'\n';
       on = on + 5;
     end
   end
 
   print("Loaded "..player_count.." players");
-
-  Prescience_helper.settings_edit_box:SetText(debug)
-  Prescience_helper.settings_edit_box:HighlightText()
-
-  Prescience_helper.settings_frame:Show();
 
   self.configs = new_configs;
 
